@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EC2 Scheduler</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --green-dim: #1a3a22;
+    --red: #f85149;
+    --red-dim: #3a1a1a;
+    --yellow: #d29922;
+    --yellow-dim: #3a2d00;
+    --blue: #388bfd;
+    --blue-dim: #0d2040;
+    --radius: 8px;
+    --font: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh; }
+
+  /* Header */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 28px; height: 28px; }
+  .header h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; }
+  .header-meta { font-size: 12px; color: var(--muted); font-family: var(--font); }
+  .btn-refresh { background: none; border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all .15s; }
+  .btn-refresh:hover { border-color: var(--blue); color: var(--blue); }
+
+  /* Layout */
+  .main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+
+  /* Settings bar */
+  .settings-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 24px; display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+  .settings-bar label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .5px; }
+  .settings-bar input, .settings-bar select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 13px; font-family: var(--font); outline: none; }
+  .settings-bar input:focus, .settings-bar select:focus { border-color: var(--blue); }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .stat-card .num { font-size: 26px; font-weight: 700; font-family: var(--font); line-height: 1; }
+  .stat-card .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; }
+  .stat-card.running .num { color: var(--green); }
+  .stat-card.stopped .num { color: var(--muted); }
+  .stat-card.total .num { color: var(--blue); }
+  .stat-card.scheduled .num { color: var(--yellow); }
+
+  /* Instance table */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); background: var(--bg); font-weight: 500; }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+
+  /* State badge */
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: var(--font); }
+  .badge::before { content:''; width:6px; height:6px; border-radius:50%; }
+  .badge.running { background: var(--green-dim); color: var(--green); }
+  .badge.running::before { background: var(--green); box-shadow: 0 0 5px var(--green); }
+  .badge.stopped { background: #1e1e1e; color: var(--muted); }
+  .badge.stopped::before { background: var(--muted); }
+  .badge.pending, .badge.stopping { background: var(--yellow-dim); color: var(--yellow); }
+  .badge.pending::before, .badge.stopping::before { background: var(--yellow); }
+
+  /* Schedule toggle */
+  .toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: .2s; }
+  .slider:before { content:''; position:absolute; width:14px; height:14px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  input:checked + .slider { background: var(--green); }
+  input:checked + .slider:before { transform: translateX(16px); }
+
+  /* Schedule display */
+  .sched-info { font-family: var(--font); font-size: 12px; color: var(--muted); }
+  .sched-info .time { color: var(--text); }
+
+  /* Action buttons */
+  .actions { display: flex; gap: 6px; }
+  .btn { padding: 5px 12px; border-radius: 6px; border: 1px solid; font-size: 12px; cursor: pointer; font-weight: 500; transition: all .15s; }
+  .btn-start { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .btn-start:hover { background: var(--green); color: #000; }
+  .btn-stop { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+  .btn-stop:hover { background: var(--red); color: #fff; }
+  .btn-edit { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+  .btn-edit:hover { background: var(--blue); color: #fff; }
+  .btn-del { background: transparent; border-color: var(--border); color: var(--muted); }
+  .btn-del:hover { border-color: var(--red); color: var(--red); }
+  .btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #1f6feb; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Add instance panel */
+  .add-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 24px; display: none; }
+  .add-panel.open { display: block; }
+  .add-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px; }
+  .form-group label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .5px; }
+  .form-group input, .form-group select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; font-family: var(--font); outline: none; }
+  .form-group input:focus, .form-group select:focus { border-color: var(--blue); }
+  .form-actions { display: flex; gap: 8px; }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; z-index: 100; align-items: center; justify-content: center; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 420px; max-width: 95vw; }
+  .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 18px; }
+  .modal .form-grid { grid-template-columns: 1fr 1fr; }
+
+  /* Jobs panel */
+  .jobs-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 24px; }
+  .jobs-panel h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; font-weight: 500; margin-bottom: 12px; }
+  .job-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; font-family: var(--font); }
+  .job-row:last-child { border-bottom: none; }
+  .job-name { color: var(--text); }
+  .job-next { color: var(--muted); }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 18px; font-size: 13px; z-index: 200; opacity: 0; transform: translateY(8px); transition: all .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: var(--green); color: var(--green); }
+  .toast.err { border-color: var(--red); color: var(--red); }
+
+  /* Empty */
+  .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .empty .icon { font-size: 36px; margin-bottom: 10px; }
+
+  /* ID chip */
+  .id-chip { font-family: var(--font); font-size: 11px; color: var(--muted); background: var(--bg); border: 1px solid var(--border); padding: 2px 7px; border-radius: 4px; }
+
+  .instance-name { font-weight: 500; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <svg class="logo" viewBox="0 0 28 28" fill="none">
+      <rect width="28" height="28" rx="6" fill="#1a2a3a"/>
+      <path d="M7 14 L14 7 L21 14 L14 21 Z" stroke="#388bfd" stroke-width="1.5" fill="none"/>
+      <circle cx="14" cy="14" r="3" fill="#388bfd"/>
+    </svg>
+    <h1>EC2 Scheduler</h1>
+  </div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span class="header-meta" id="clock">—</span>
+    <button class="btn-refresh" onclick="refresh()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Settings bar -->
+  <div class="settings-bar">
+    <div>
+      <label>AWS Region</label>
+      <input type="text" id="cfg-region" placeholder="us-east-1" style="width:140px">
+    </div>
+    <div>
+      <label>Timezone</label>
+      <select id="cfg-tz" style="width:180px">
+        <option value="Asia/Karachi">Asia/Karachi (PKT)</option>
+        <option value="UTC">UTC</option>
+        <option value="US/Eastern">US/Eastern (EST)</option>
+        <option value="US/Pacific">US/Pacific (PST)</option>
+        <option value="US/Central">US/Central (CST)</option>
+        <option value="Europe/London">Europe/London (GMT)</option>
+        <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+        <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+        <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+        <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+        <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+        <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="saveConfig()">Save Settings</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats" id="stats">
+    <div class="stat-card total"><div class="num" id="s-total">—</div><div class="lbl">Total</div></div>
+    <div class="stat-card running"><div class="num" id="s-running">—</div><div class="lbl">Running</div></div>
+    <div class="stat-card stopped"><div class="num" id="s-stopped">—</div><div class="lbl">Stopped</div></div>
+    <div class="stat-card scheduled"><div class="num" id="s-scheduled">—</div><div class="lbl">Scheduled</div></div>
+  </div>
+
+  <!-- Top bar -->
+  <div class="top-bar">
+    <span class="section-title">Instances</span>
+    <button class="btn btn-primary" onclick="toggleAddPanel()">+ Add Instance</button>
+  </div>
+
+  <!-- Add panel -->
+  <div class="add-panel" id="add-panel">
+    <h3>Add Instance</h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Instance ID *</label>
+        <input type="text" id="new-id" placeholder="i-0abc123def456">
+      </div>
+      <div class="form-group">
+        <label>Label (optional)</label>
+        <input type="text" id="new-label" placeholder="Production Web Server">
+      </div>
+      <div class="form-group">
+        <label>Start Time</label>
+        <input type="time" id="new-start" value="09:00">
+      </div>
+      <div class="form-group">
+        <label>Stop Time</label>
+        <input type="time" id="new-stop" value="18:00">
+      </div>
+      <div class="form-group">
+        <label>Days</label>
+        <select id="new-days">
+          <option value="mon-fri">Mon – Fri (Weekdays)</option>
+          <option value="mon-sat">Mon – Sat</option>
+          <option value="mon-sun">Mon – Sun (Every day)</option>
+          <option value="sat-sun">Sat – Sun (Weekends)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="addInstance()">Add Instance</button>
+      <button class="btn btn-del" onclick="toggleAddPanel()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Instance</th>
+          <th>State</th>
+          <th>Schedule</th>
+          <th>Auto-schedule</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="instance-tbody">
+        <tr><td colspan="5"><div class="empty"><div class="icon">⚙️</div>Loading instances…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Jobs panel -->
+  <div class="jobs-panel">
+    <h3>Upcoming scheduled jobs</h3>
+    <div id="jobs-list"><span style="color:var(--muted);font-size:12px">Loading…</span></div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-bg" id="edit-modal">
+  <div class="modal">
+    <h3>Edit Schedule</h3>
+    <input type="hidden" id="edit-iid">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Label</label>
+        <input type="text" id="edit-label" placeholder="My server">
+      </div>
+      <div class="form-group">
+        <label>Days</label>
+        <select id="edit-days">
+          <option value="mon-fri">Mon – Fri</option>
+          <option value="mon-sat">Mon – Sat</option>
+          <option value="mon-sun">Every day</option>
+          <option value="sat-sun">Weekends</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Start Time</label>
+        <input type="time" id="edit-start">
+      </div>
+      <div class="form-group">
+        <label>Stop Time</label>
+        <input type="time" id="edit-stop">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+      <button class="btn btn-del" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let instances = [];
+
+// Clock
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Toast
+function toast(msg, type='ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 2500);
+}
+
+// Load config
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const cfg = await r.json();
+  document.getElementById('cfg-region').value = cfg.region || 'us-east-1';
+  document.getElementById('cfg-tz').value = cfg.timezone || 'Asia/Karachi';
+}
+
+async function saveConfig() {
+  const region = document.getElementById('cfg-region').value.trim();
+  const timezone = document.getElementById('cfg-tz').value;
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({region, timezone})
+  });
+  toast('Settings saved');
+  refresh();
+}
+
+// Load instances
+async function loadInstances() {
+  const r = await fetch('/api/instances');
+  instances = await r.json();
+  renderTable();
+  renderStats();
+}
+
+function renderStats() {
+  document.getElementById('s-total').textContent = instances.length;
+  document.getElementById('s-running').textContent = instances.filter(i=>i.state==='running').length;
+  document.getElementById('s-stopped').textContent = instances.filter(i=>i.state==='stopped').length;
+  document.getElementById('s-scheduled').textContent = instances.filter(i=>i.schedule_enabled).length;
+}
+
+function daysLabel(d) {
+  const map = {'mon-fri':'Mon–Fri','mon-sat':'Mon–Sat','mon-sun':'Every day','sat-sun':'Weekends'};
+  return map[d] || d;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('instance-tbody');
+  if (!instances.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="icon">🖥️</div>No instances yet. Click "Add Instance" to get started.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = instances.map(inst => {
+    const state = inst.state || 'unknown';
+    const name  = inst.label || inst.name || inst.id;
+    const canStart = ['stopped','stopping'].includes(state);
+    const canStop  = ['running','pending'].includes(state);
+    return `
+    <tr>
+      <td>
+        <div class="instance-name">${escHtml(name)}</div>
+        <div style="margin-top:3px"><span class="id-chip">${inst.id}</span>
+        ${inst.type ? `<span class="id-chip" style="margin-left:4px">${inst.type}</span>` : ''}
+        </div>
+      </td>
+      <td><span class="badge ${state}">${state}</span></td>
+      <td>
+        <div class="sched-info">
+          <span class="time">${inst.start_time||'09:00'} – ${inst.stop_time||'18:00'}</span>
+          &nbsp;·&nbsp;${daysLabel(inst.days||'mon-fri')}
+        </div>
+      </td>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" ${inst.schedule_enabled ? 'checked' : ''} onchange="toggleSchedule('${inst.id}', this.checked)">
+          <span class="slider"></span>
+        </label>
+      </td>
+      <td>
+        <div class="actions">
+          ${canStart ? `<button class="btn btn-start" onclick="doAction('${inst.id}','start')">Start</button>` : ''}
+          ${canStop  ? `<button class="btn btn-stop"  onclick="doAction('${inst.id}','stop')">Stop</button>` : ''}
+          <button class="btn btn-edit" onclick="openEdit('${inst.id}')">Edit</button>
+          <button class="btn btn-del"  onclick="deleteInstance('${inst.id}')">✕</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Actions
+async function doAction(id, action) {
+  const r = await fetch('/api/action', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({id, action})
+  });
+  const d = await r.json();
+  if (d.ok) { toast(`${action === 'start' ? 'Starting' : 'Stopping'} ${id}`); setTimeout(refresh, 2000); }
+  else toast(d.error || 'Action failed', 'err');
+}
+
+async function toggleSchedule(id, enabled) {
+  await fetch(`/api/instances/${id}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({schedule_enabled: enabled})
+  });
+  toast(enabled ? 'Schedule enabled' : 'Schedule disabled');
+  loadJobs();
+}
+
+async function deleteInstance(id) {
+  if (!confirm(`Remove ${id} from scheduler?`)) return;
+  await fetch(`/api/instances/${id}`, {method:'DELETE'});
+  toast('Instance removed');
+  refresh();
+}
+
+// Add
+function toggleAddPanel() {
+  document.getElementById('add-panel').classList.toggle('open');
+}
+
+async function addInstance() {
+  const id    = document.getElementById('new-id').value.trim();
+  const label = document.getElementById('new-label').value.trim();
+  const start = document.getElementById('new-start').value;
+  const stop  = document.getElementById('new-stop').value;
+  const days  = document.getElementById('new-days').value;
+  if (!id) { toast('Instance ID is required', 'err'); return; }
+  const r = await fetch('/api/instances', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({id, label, start_time:start, stop_time:stop, days, schedule_enabled:true})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    toast('Instance added');
+    document.getElementById('new-id').value = '';
+    document.getElementById('new-label').value = '';
+    toggleAddPanel();
+    refresh();
+  } else toast(d.error || 'Failed to add', 'err');
+}
+
+// Edit modal
+function openEdit(id) {
+  const inst = instances.find(i=>i.id===id);
+  if (!inst) return;
+  document.getElementById('edit-iid').value   = id;
+  document.getElementById('edit-label').value = inst.label || '';
+  document.getElementById('edit-start').value = inst.start_time || '09:00';
+  document.getElementById('edit-stop').value  = inst.stop_time  || '18:00';
+  document.getElementById('edit-days').value  = inst.days       || 'mon-fri';
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('edit-modal').classList.remove('open');
+}
+
+async function saveEdit() {
+  const id    = document.getElementById('edit-iid').value;
+  const label = document.getElementById('edit-label').value;
+  const start = document.getElementById('edit-start').value;
+  const stop  = document.getElementById('edit-stop').value;
+  const days  = document.getElementById('edit-days').value;
+  await fetch(`/api/instances/${id}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({label, start_time:start, stop_time:stop, days})
+  });
+  toast('Schedule updated');
+  closeModal();
+  refresh();
+}
+
+// Jobs
+async function loadJobs() {
+  const r = await fetch('/api/jobs');
+  const jobs = await r.json();
+  const el = document.getElementById('jobs-list');
+  if (!jobs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:12px">No active jobs.</span>'; return; }
+  el.innerHTML = jobs.map(j => {
+    const next = j.next_run ? new Date(j.next_run).toLocaleString() : '—';
+    return `<div class="job-row"><span class="job-name">${j.name}</span><span class="job-next">Next: ${next}</span></div>`;
+  }).join('');
+}
+
+function refresh() {
+  loadInstances();
+  loadJobs();
+}
+
+// Close modal on background click
+document.getElementById('edit-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+// Init
+loadConfig();
+refresh();
+setInterval(refresh, 30000); // auto-refresh every 30s
+</script>
+</body>
+</html>
