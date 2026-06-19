@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EC2 Scheduler</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
+    --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --green: #3fb950; --green-dim: #1a3a22;
+    --red: #f85149;   --red-dim: #3a1a1a;
+    --yellow: #d29922; --yellow-dim: #3a2d00;
+    --blue: #388bfd;  --blue-dim: #0d2040;
+    --purple: #bc8cff; --purple-dim: #2a1a4a;
+    --radius: 8px;
+    --font: 'SF Mono','Fira Code','Consolas',monospace;
+    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh;}
+
+  /* Header */
+  .header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
+  .header-left{display:flex;align-items:center;gap:12px;}
+  .header h1{font-size:16px;font-weight:600;}
+  .header-meta{font-size:12px;color:var(--muted);font-family:var(--font);}
+  .btn-sm{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:var(--radius);cursor:pointer;font-size:12px;transition:all .15s;}
+  .btn-sm:hover{border-color:var(--blue);color:var(--blue);}
+
+  /* Layout */
+  .main{max-width:1200px;margin:0 auto;padding:24px 16px;}
+
+  /* Tabs */
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:24px;}
+  .tab{padding:8px 18px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s;}
+  .tab:hover{color:var(--text);}
+  .tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:500;}
+
+  /* Panel */
+  .panel{display:none;} .panel.active{display:block;}
+
+  /* Settings */
+  .settings-row{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .fg label{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;}
+  .fg select,.fg input{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font-size:13px;font-family:var(--font);outline:none;}
+  .fg select:focus,.fg input:focus{border-color:var(--blue);}
+
+  /* Stats */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:24px;}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;}
+  .stat .n{font-size:26px;font-weight:700;font-family:var(--font);line-height:1;}
+  .stat .l{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px;}
+  .stat.c-blue .n{color:var(--blue);} .stat.c-green .n{color:var(--green);} .stat.c-muted .n{color:var(--muted);} .stat.c-yellow .n{color:var(--yellow);} .stat.c-purple .n{color:var(--purple);}
+
+  /* Section bar */
+  .sec-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+  .sec-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);}
+
+  /* Accounts grid */
+  .accounts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:24px;}
+  .acct-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
+  .acct-card.default-acct{border-color:var(--blue-dim);}
+  .acct-card .acct-label{font-weight:600;font-size:14px;margin-bottom:4px;}
+  .acct-card .acct-meta{font-size:12px;color:var(--muted);font-family:var(--font);}
+  .acct-card .acct-actions{display:flex;gap:6px;margin-top:12px;}
+  .keys-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:var(--green-dim);color:var(--green);}
+  .keys-badge.no-keys{background:var(--yellow-dim);color:var(--yellow);}
+
+  /* Table */
+  .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;}
+  table{width:100%;border-collapse:collapse;}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);background:var(--bg);font-weight:500;}
+  td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:rgba(255,255,255,.02);}
+
+  /* Badges */
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--font);}
+  .badge::before{content:'';width:6px;height:6px;border-radius:50%;}
+  .badge.running{background:var(--green-dim);color:var(--green);}
+  .badge.running::before{background:var(--green);box-shadow:0 0 5px var(--green);}
+  .badge.stopped{background:#1e1e1e;color:var(--muted);}
+  .badge.stopped::before{background:var(--muted);}
+  .badge.pending,.badge.stopping{background:var(--yellow-dim);color:var(--yellow);}
+  .badge.pending::before,.badge.stopping::before{background:var(--yellow);}
+  .badge.error{background:var(--red-dim);color:var(--red);}
+  .badge.error::before{background:var(--red);}
+
+  /* Account pill */
+  .acct-pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-family:var(--font);background:var(--purple-dim);color:var(--purple);}
+  .region-pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-family:var(--font);background:var(--blue-dim);color:var(--blue);margin-left:4px;}
+
+  /* Toggle */
+  .toggle{position:relative;display:inline-block;width:36px;height:20px;}
+  .toggle input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:var(--border);border-radius:20px;cursor:pointer;transition:.2s;}
+  .slider:before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
+  input:checked+.slider{background:var(--green);}
+  input:checked+.slider:before{transform:translateX(16px);}
+
+  /* Sched info */
+  .sched-info{font-family:var(--font);font-size:12px;color:var(--muted);}
+  .sched-info .t{color:var(--text);}
+
+  /* Buttons */
+  .btn{padding:5px 12px;border-radius:6px;border:1px solid;font-size:12px;cursor:pointer;font-weight:500;transition:all .15s;}
+  .btn-start{background:var(--green-dim);border-color:var(--green);color:var(--green);}
+  .btn-start:hover{background:var(--green);color:#000;}
+  .btn-stop{background:var(--red-dim);border-color:var(--red);color:var(--red);}
+  .btn-stop:hover{background:var(--red);color:#fff;}
+  .btn-edit{background:var(--blue-dim);border-color:var(--blue);color:var(--blue);}
+  .btn-edit:hover{background:var(--blue);color:#fff;}
+  .btn-del{background:transparent;border-color:var(--border);color:var(--muted);}
+  .btn-del:hover{border-color:var(--red);color:var(--red);}
+  .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:500;border:none;transition:all .15s;}
+  .btn-primary:hover{background:#1f6feb;}
+
+  /* Add / Edit panels */
+  .slide-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px;display:none;}
+  .slide-panel.open{display:block;}
+  .slide-panel h3{font-size:14px;font-weight:600;margin-bottom:16px;}
+  .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:16px;}
+  .form-grid .fg input,.form-grid .fg select{width:100%;}
+  .form-actions{display:flex;gap:8px;}
+
+  /* Modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;z-index:100;align-items:center;justify-content:center;}
+  .modal-bg.open{display:flex;}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:460px;max-width:95vw;}
+  .modal h3{font-size:15px;font-weight:600;margin-bottom:18px;}
+
+  /* Jobs */
+  .jobs-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
+  .jobs-wrap h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:500;margin-bottom:12px;}
+  .job-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;font-family:var(--font);}
+  .job-row:last-child{border-bottom:none;}
+
+  /* Toast */
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 18px;font-size:13px;z-index:200;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none;}
+  .toast.show{opacity:1;transform:translateY(0);}
+  .toast.ok{border-color:var(--green);color:var(--green);}
+  .toast.err{border-color:var(--red);color:var(--red);}
+
+  /* Chip */
+  .chip{font-family:var(--font);font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);padding:2px 7px;border-radius:4px;}
+  .inst-name{font-weight:500;font-size:13px;}
+  .empty{text-align:center;padding:40px 16px;color:var(--muted);}
+  .actions{display:flex;gap:5px;flex-wrap:wrap;}
+
+  /* Divider */
+  .divider{height:1px;background:var(--border);margin:24px 0;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <rect width="28" height="28" rx="6" fill="#1a2a3a"/>
+      <path d="M7 14L14 7l7 7-7 7z" stroke="#388bfd" stroke-width="1.5" fill="none"/>
+      <circle cx="14" cy="14" r="3" fill="#388bfd"/>
+    </svg>
+    <h1>EC2 Scheduler</h1>
+  </div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span class="header-meta" id="clock">—</span>
+    <button class="btn-sm" onclick="refresh()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('instances')">Instances</div>
+    <div class="tab" onclick="switchTab('accounts')">AWS Accounts</div>
+    <div class="tab" onclick="switchTab('jobs')">Scheduled Jobs</div>
+  </div>
+
+  <!-- ═══════════════ INSTANCES TAB ═══════════════ -->
+  <div class="panel active" id="tab-instances">
+
+    <!-- Settings row -->
+    <div class="settings-row">
+      <div class="fg">
+        <label>Timezone</label>
+        <select id="cfg-tz" style="width:200px">
+          <option value="Asia/Karachi">Asia/Karachi (PKT)</option>
+          <option value="UTC">UTC</option>
+          <option value="US/Eastern">US/Eastern (EST)</option>
+          <option value="US/Pacific">US/Pacific (PST)</option>
+          <option value="US/Central">US/Central (CST)</option>
+          <option value="Europe/London">Europe/London (GMT)</option>
+          <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+          <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+          <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+          <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+          <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+          <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="saveTz()">Save Timezone</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat c-blue"><div class="n" id="s-total">—</div><div class="l">Total</div></div>
+      <div class="stat c-green"><div class="n" id="s-running">—</div><div class="l">Running</div></div>
+      <div class="stat c-muted"><div class="n" id="s-stopped">—</div><div class="l">Stopped</div></div>
+      <div class="stat c-yellow"><div class="n" id="s-sched">—</div><div class="l">Scheduled</div></div>
+      <div class="stat c-purple"><div class="n" id="s-accounts">—</div><div class="l">Accounts</div></div>
+    </div>
+
+    <!-- Add instance -->
+    <div class="sec-bar">
+      <span class="sec-title">Instances</span>
+      <button class="btn-primary" onclick="togglePanel('add-inst-panel')">+ Add Instance</button>
+    </div>
+
+    <div class="slide-panel" id="add-inst-panel">
+      <h3>Add Instance</h3>
+      <div class="form-grid">
+        <div class="fg">
+          <label>Instance ID *</label>
+          <input type="text" id="ni-id" placeholder="i-0abc123def456789">
+        </div>
+        <div class="fg">
+          <label>Label (optional)</label>
+          <input type="text" id="ni-label" placeholder="Production Web Server">
+        </div>
+        <div class="fg">
+          <label>AWS Account *</label>
+          <select id="ni-acct"></select>
+        </div>
+        <div class="fg">
+          <label>Region *</label>
+          <select id="ni-region">
+            <option value="us-east-1">us-east-1 (N. Virginia)</option>
+            <option value="us-east-2">us-east-2 (Ohio)</option>
+            <option value="us-west-1">us-west-1 (N. California)</option>
+            <option value="us-west-2">us-west-2 (Oregon)</option>
+            <option value="eu-west-1">eu-west-1 (Ireland)</option>
+            <option value="eu-west-2">eu-west-2 (London)</option>
+            <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+            <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+            <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+            <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+            <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+            <option value="me-south-1">me-south-1 (Bahrain)</option>
+            <option value="ca-central-1">ca-central-1 (Canada)</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Start Time</label>
+          <input type="time" id="ni-start" value="09:00">
+        </div>
+        <div class="fg">
+          <label>Stop Time</label>
+          <input type="time" id="ni-stop" value="18:00">
+        </div>
+        <div class="fg">
+          <label>Days</label>
+          <select id="ni-days">
+            <option value="mon-fri">Mon–Fri (Weekdays)</option>
+            <option value="mon-sat">Mon–Sat</option>
+            <option value="mon-sun">Every day</option>
+            <option value="sat-sun">Weekends</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" onclick="addInstance()">Add Instance</button>
+        <button class="btn btn-del" onclick="togglePanel('add-inst-panel')">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Instance</th>
+            <th>Account / Region</th>
+            <th>State</th>
+            <th>Schedule</th>
+            <th>Auto</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="inst-tbody">
+          <tr><td colspan="6"><div class="empty">Loading…</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════ ACCOUNTS TAB ═══════════════ -->
+  <div class="panel" id="tab-accounts">
+
+    <div class="sec-bar" style="margin-bottom:16px">
+      <span class="sec-title">AWS Accounts</span>
+      <button class="btn-primary" onclick="togglePanel('add-acct-panel')">+ Add Account</button>
+    </div>
+
+    <div class="slide-panel" id="add-acct-panel">
+      <h3>Add AWS Account</h3>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Enter the IAM user credentials from your second AWS account. The IAM user needs <strong style="color:var(--text)">ec2:DescribeInstances, ec2:StartInstances, ec2:StopInstances</strong> permissions.</p>
+      <div class="form-grid">
+        <div class="fg">
+          <label>Account Label *</label>
+          <input type="text" id="na-label" placeholder="Production Account">
+        </div>
+        <div class="fg">
+          <label>Access Key ID *</label>
+          <input type="text" id="na-key" placeholder="AKIAIOSFODNN7EXAMPLE">
+        </div>
+        <div class="fg">
+          <label>Secret Access Key *</label>
+          <input type="password" id="na-secret" placeholder="wJalrXUtnFEMI/K7MDENG...">
+        </div>
+        <div class="fg">
+          <label>Test Region</label>
+          <select id="na-region">
+            <option value="us-east-1">us-east-1</option>
+            <option value="us-east-2">us-east-2</option>
+            <option value="us-west-2">us-west-2</option>
+            <option value="eu-west-1">eu-west-1</option>
+            <option value="ap-south-1">ap-south-1</option>
+            <option value="ap-southeast-1">ap-southeast-1</option>
+            <option value="me-south-1">me-south-1</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" id="add-acct-btn" onclick="addAccount()">Verify & Add Account</button>
+        <button class="btn btn-del" onclick="togglePanel('add-acct-panel')">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Default account card -->
+    <div class="accounts-grid" id="accounts-grid">
+      <div class="acct-card default-acct">
+        <div class="acct-label">Account 1 — This Machine</div>
+        <div class="acct-meta" style="margin-top:4px">Using IAM Role attached to this EC2 instance</div>
+        <div style="margin-top:8px"><span class="keys-badge">✓ IAM Role</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ JOBS TAB ═══════════════ -->
+  <div class="panel" id="tab-jobs">
+    <div class="jobs-wrap">
+      <h3>Upcoming Scheduled Jobs</h3>
+      <div id="jobs-list"><span style="color:var(--muted);font-size:12px">Loading…</span></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- Edit Instance Modal -->
+<div class="modal-bg" id="edit-modal">
+  <div class="modal">
+    <h3>Edit Instance Schedule</h3>
+    <input type="hidden" id="ei-iid">
+    <div class="form-grid">
+      <div class="fg"><label>Label</label><input type="text" id="ei-label" style="width:100%"></div>
+      <div class="fg">
+        <label>AWS Account</label>
+        <select id="ei-acct" style="width:100%"></select>
+      </div>
+      <div class="fg">
+        <label>Region</label>
+        <select id="ei-region" style="width:100%">
+          <option value="us-east-1">us-east-1</option>
+          <option value="us-east-2">us-east-2</option>
+          <option value="us-west-1">us-west-1</option>
+          <option value="us-west-2">us-west-2</option>
+          <option value="eu-west-1">eu-west-1</option>
+          <option value="eu-west-2">eu-west-2</option>
+          <option value="eu-central-1">eu-central-1</option>
+          <option value="ap-south-1">ap-south-1</option>
+          <option value="ap-southeast-1">ap-southeast-1</option>
+          <option value="ap-southeast-2">ap-southeast-2</option>
+          <option value="ap-northeast-1">ap-northeast-1</option>
+          <option value="me-south-1">me-south-1</option>
+          <option value="ca-central-1">ca-central-1</option>
+        </select>
+      </div>
+      <div class="fg"><label>Start Time</label><input type="time" id="ei-start" style="width:100%"></div>
+      <div class="fg"><label>Stop Time</label><input type="time" id="ei-stop" style="width:100%"></div>
+      <div class="fg">
+        <label>Days</label>
+        <select id="ei-days" style="width:100%">
+          <option value="mon-fri">Mon–Fri</option>
+          <option value="mon-sat">Mon–Sat</option>
+          <option value="mon-sun">Every day</option>
+          <option value="sat-sun">Weekends</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn-primary" onclick="saveEdit()">Save Changes</button>
+      <button class="btn btn-del" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let instances = [];
+let accounts  = [];
+
+// ── Clock ──
+setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
+
+// ── Toast ──
+function toast(msg, type='ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 2800);
+}
+
+// ── Tabs ──
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const tabs = ['instances','accounts','jobs'];
+  document.querySelectorAll('.tab')[tabs.indexOf(name)].classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'jobs') loadJobs();
+}
+
+// ── Panel toggle ──
+function togglePanel(id) {
+  document.getElementById(id).classList.toggle('open');
+}
+
+// ── Escape HTML ──
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Config ──
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const cfg = await r.json();
+  document.getElementById('cfg-tz').value = cfg.timezone || 'Asia/Karachi';
+  accounts = cfg.accounts || [];
+  document.getElementById('s-accounts').textContent = accounts.length + 1; // +1 for default
+  renderAccountSelects();
+  renderAccountCards(cfg.accounts || []);
+}
+
+async function saveTz() {
+  const tz = document.getElementById('cfg-tz').value;
+  await fetch('/api/config/timezone', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({timezone:tz})});
+  toast('Timezone saved');
+  loadJobs();
+}
+
+// ── Accounts ──
+function renderAccountSelects() {
+  const opts = `<option value="default">Account 1 — This Machine (IAM Role)</option>` +
+    accounts.map(a => `<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('');
+  ['ni-acct','ei-acct'].forEach(id => { const el = document.getElementById(id); if(el) el.innerHTML = opts; });
+}
+
+function renderAccountCards(accts) {
+  const grid = document.getElementById('accounts-grid');
+  const extra = accts.map(a => `
+    <div class="acct-card">
+      <div class="acct-label">${esc(a.label)}</div>
+      <div class="acct-meta" style="margin-top:4px;font-family:var(--font)">${esc(a.id)}</div>
+      <div style="margin-top:8px"><span class="keys-badge ${a.has_keys ? '' : 'no-keys'}">${a.has_keys ? '✓ Keys set' : '⚠ No keys'}</span></div>
+      <div class="acct-actions">
+        <button class="btn btn-del" onclick="deleteAccount('${esc(a.id)}')">Remove</button>
+      </div>
+    </div>`).join('');
+  grid.innerHTML = `
+    <div class="acct-card default-acct">
+      <div class="acct-label">Account 1 — This Machine</div>
+      <div class="acct-meta" style="margin-top:4px">IAM Role attached to this EC2 instance</div>
+      <div style="margin-top:8px"><span class="keys-badge">✓ IAM Role</span></div>
+    </div>` + extra;
+}
+
+async function addAccount() {
+  const label  = document.getElementById('na-label').value.trim();
+  const key    = document.getElementById('na-key').value.trim();
+  const secret = document.getElementById('na-secret').value.trim();
+  const region = document.getElementById('na-region').value;
+  if (!label||!key||!secret) { toast('All fields required','err'); return; }
+  const btn = document.getElementById('add-acct-btn');
+  btn.textContent = 'Verifying…'; btn.disabled = true;
+  const r = await fetch('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label,access_key:key,secret_key:secret,test_region:region})});
+  const d = await r.json();
+  btn.textContent = 'Verify & Add Account'; btn.disabled = false;
+  if (d.ok) {
+    toast('Account added & verified ✓');
+    document.getElementById('na-label').value=''; document.getElementById('na-key').value=''; document.getElementById('na-secret').value='';
+    togglePanel('add-acct-panel');
+    loadConfig();
+  } else toast(d.error || 'Failed to add account','err');
+}
+
+async function deleteAccount(id) {
+  if (!confirm('Remove this account? All its instances will also be removed from the scheduler.')) return;
+  await fetch(`/api/accounts/${id}`, {method:'DELETE'});
+  toast('Account removed');
+  loadConfig();
+  loadInstances();
+}
+
+// ── Instances ──
+async function loadInstances() {
+  const r = await fetch('/api/instances');
+  instances = await r.json();
+  renderTable();
+  renderStats();
+}
+
+function renderStats() {
+  document.getElementById('s-total').textContent   = instances.length;
+  document.getElementById('s-running').textContent = instances.filter(i=>i.state==='running').length;
+  document.getElementById('s-stopped').textContent = instances.filter(i=>i.state==='stopped').length;
+  document.getElementById('s-sched').textContent   = instances.filter(i=>i.schedule_enabled).length;
+}
+
+function daysLabel(d) {
+  return {'mon-fri':'Mon–Fri','mon-sat':'Mon–Sat','mon-sun':'Every day','sat-sun':'Weekends'}[d] || d;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('inst-tbody');
+  if (!instances.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">No instances yet. Click "+ Add Instance" to get started.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = instances.map(inst => {
+    const state    = inst.state || 'unknown';
+    const name     = inst.label || inst.aws_name || inst.id;
+    const canStart = ['stopped','stopping','error'].includes(state);
+    const canStop  = ['running','pending'].includes(state);
+    return `<tr>
+      <td>
+        <div class="inst-name">${esc(name)}</div>
+        <div style="margin-top:3px"><span class="chip">${esc(inst.id)}</span>${inst.type?`<span class="chip" style="margin-left:4px">${esc(inst.type)}</span>`:''}</div>
+      </td>
+      <td>
+        <span class="acct-pill">${esc(inst.account_label||'Account 1')}</span>
+        <span class="region-pill">${esc(inst.region)}</span>
+      </td>
+      <td><span class="badge ${state}">${state}</span></td>
+      <td>
+        <div class="sched-info"><span class="t">${inst.start_time||'09:00'} – ${inst.stop_time||'18:00'}</span> · ${daysLabel(inst.days||'mon-fri')}</div>
+      </td>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" ${inst.schedule_enabled?'checked':''} onchange="toggleSched('${esc(inst.id)}',this.checked)">
+          <span class="slider"></span>
+        </label>
+      </td>
+      <td>
+        <div class="actions">
+          ${canStart?`<button class="btn btn-start" onclick="doAction('${esc(inst.id)}','start')">Start</button>`:''}
+          ${canStop ?`<button class="btn btn-stop"  onclick="doAction('${esc(inst.id)}','stop')">Stop</button>`:''}
+          <button class="btn btn-edit" onclick="openEdit('${esc(inst.id)}')">Edit</button>
+          <button class="btn btn-del"  onclick="deleteInst('${esc(inst.id)}')">✕</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function addInstance() {
+  const id    = document.getElementById('ni-id').value.trim();
+  const label = document.getElementById('ni-label').value.trim();
+  const acct  = document.getElementById('ni-acct').value;
+  const region= document.getElementById('ni-region').value;
+  const start = document.getElementById('ni-start').value;
+  const stop  = document.getElementById('ni-stop').value;
+  const days  = document.getElementById('ni-days').value;
+  if (!id) { toast('Instance ID is required','err'); return; }
+  const r = await fetch('/api/instances', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id,label,account_id:acct,region,start_time:start,stop_time:stop,days,schedule_enabled:true})});
+  const d = await r.json();
+  if (d.ok) { toast('Instance added'); document.getElementById('ni-id').value=''; document.getElementById('ni-label').value=''; togglePanel('add-inst-panel'); refresh(); }
+  else toast(d.error||'Failed','err');
+}
+
+async function doAction(id, action) {
+  const r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id,action})});
+  const d = await r.json();
+  if (d.ok) { toast(`${action==='start'?'Starting':'Stopping'} ${id}`); setTimeout(loadInstances, 2500); }
+  else toast(d.error||'Action failed','err');
+}
+
+async function toggleSched(id, enabled) {
+  await fetch(`/api/instances/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({schedule_enabled:enabled})});
+  toast(enabled ? 'Schedule enabled' : 'Schedule paused');
+  loadJobs();
+}
+
+async function deleteInst(id) {
+  if (!confirm(`Remove ${id} from scheduler?`)) return;
+  await fetch(`/api/instances/${id}`, {method:'DELETE'});
+  toast('Instance removed'); refresh();
+}
+
+// ── Edit modal ──
+function openEdit(id) {
+  const inst = instances.find(i=>i.id===id); if(!inst) return;
+  document.getElementById('ei-iid').value   = id;
+  document.getElementById('ei-label').value = inst.label||'';
+  document.getElementById('ei-start').value = inst.start_time||'09:00';
+  document.getElementById('ei-stop').value  = inst.stop_time||'18:00';
+  document.getElementById('ei-days').value  = inst.days||'mon-fri';
+  document.getElementById('ei-acct').value  = inst.account_id||'default';
+  document.getElementById('ei-region').value= inst.region||'us-east-1';
+  document.getElementById('edit-modal').classList.add('open');
+}
+function closeModal() { document.getElementById('edit-modal').classList.remove('open'); }
+document.getElementById('edit-modal').addEventListener('click', e => { if(e.target===document.getElementById('edit-modal')) closeModal(); });
+
+async function saveEdit() {
+  const id    = document.getElementById('ei-iid').value;
+  const label = document.getElementById('ei-label').value;
+  const acct  = document.getElementById('ei-acct').value;
+  const region= document.getElementById('ei-region').value;
+  const start = document.getElementById('ei-start').value;
+  const stop  = document.getElementById('ei-stop').value;
+  const days  = document.getElementById('ei-days').value;
+  await fetch(`/api/instances/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label,account_id:acct,region,start_time:start,stop_time:stop,days})});
+  toast('Updated'); closeModal(); refresh();
+}
+
+// ── Jobs ──
+async function loadJobs() {
+  const r = await fetch('/api/jobs');
+  const jobs = await r.json();
+  const el = document.getElementById('jobs-list');
+  if (!jobs.length) { el.innerHTML='<span style="color:var(--muted);font-size:12px">No active scheduled jobs.</span>'; return; }
+  el.innerHTML = jobs.map(j=>`
+    <div class="job-row">
+      <span style="color:var(--text);font-family:var(--font)">${esc(j.name)}</span>
+      <span style="color:var(--muted)">${j.next_run ? new Date(j.next_run).toLocaleString() : '—'}</span>
+    </div>`).join('');
+}
+
+function refresh() { loadConfig(); loadInstances(); }
+
+// Init
+refresh();
+setInterval(loadInstances, 30000);
+</script>
+</body>
+</html>
